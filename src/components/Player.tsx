@@ -6,7 +6,7 @@ import { GameStats } from "@/pages/Game";
 import GunWrapper from "./gun-1911-wrapper";
 import { isPausedRef } from "./GameScene";
 import { WEAPONS, WEAPON_ORDER, WeaponId } from "./weapons";
-import { resolveCollision } from "./collisions";
+import { mobileJoystick, mobileLook, isMobile } from "./MobileControls";
 
 const MOVE_SPEED    = 5;
 const PLAYER_HEIGHT = 1.9;
@@ -34,6 +34,9 @@ export interface BulletData {
 
 export const playerPositionRef = { current: new THREE.Vector3(0, PLAYER_HEIGHT, 0) };
 export const bulletsRef: { current: BulletData[] } = { current: [] };
+export const mobileShootRef:  { fn: (() => void) | null } = { fn: null };
+export const mobileReloadRef: { fn: (() => void) | null } = { fn: null };
+export const mobileSwitchRef: { fn: ((d: 1|-1) => void) | null } = { fn: null };
 let bulletIdCounter = 0;
 
 export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
@@ -168,6 +171,24 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
   }, [setStats]);
 
   // ── EVENTI ─────────────────────────────────────────────────
+  // Collega funzioni ai ref mobile
+  useEffect(() => {
+    mobileShootRef.fn  = shoot;
+    mobileReloadRef.fn = reload;
+    mobileSwitchRef.fn = (dir: 1 | -1) => {
+      const s        = statsRef.current;
+      const unlocked = s.unlockedWeapons ?? ["pistol"];
+      const idx      = unlocked.indexOf(s.currentWeapon ?? "pistol");
+      const next     = unlocked[(idx + dir + unlocked.length) % unlocked.length] as WeaponId;
+      switchWeapon(next);
+    };
+    return () => {
+      mobileShootRef.fn  = null;
+      mobileReloadRef.fn = null;
+      mobileSwitchRef.fn = null;
+    };
+  }, [shoot, reload, switchWeapon]);
+
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
       if (!document.pointerLockElement || e.button !== 0 || isPausedRef.current) return;
@@ -211,25 +232,40 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
 
     const { forward, back, left, right } = getKeys();
 
+    // Input mobile joystick
+    const mj = mobileJoystick;
+    const mForward = forward || mj.y >  0.15;
+    const mBack    = back    || mj.y < -0.15;
+    const mLeft    = left    || mj.x < -0.15;
+    const mRight   = right   || mj.x >  0.15;
+
     direction.current.set(0, 0, 0);
     camera.getWorldDirection(_camDir.current);
     _camDir.current.y = 0;
     _camDir.current.normalize();
     _sideDir.current.set(-_camDir.current.z, 0, _camDir.current.x);
 
-    if (forward) direction.current.addScaledVector(_camDir.current, 1);
-    if (back)    direction.current.addScaledVector(_camDir.current, -1);
-    if (left)    direction.current.addScaledVector(_sideDir.current, -1);
-    if (right)   direction.current.addScaledVector(_sideDir.current, 1);
+    if (mForward) direction.current.addScaledVector(_camDir.current, Math.max(1, Math.abs(mj.y)));
+    if (mBack)    direction.current.addScaledVector(_camDir.current, -Math.max(1, Math.abs(mj.y)));
+    if (mLeft)    direction.current.addScaledVector(_sideDir.current, -Math.max(1, Math.abs(mj.x)));
+    if (mRight)   direction.current.addScaledVector(_sideDir.current,  Math.max(1, Math.abs(mj.x)));
     if (direction.current.lengthSq() > 0) direction.current.normalize();
+
+    // Camera look da swipe mobile
+    if (isMobile && (mobileLook.dx !== 0 || mobileLook.dy !== 0)) {
+      camera.rotation.order = "YXZ";
+      camera.rotation.y -= mobileLook.dx;
+      camera.rotation.x -= mobileLook.dy;
+      camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+      mobileLook.dx = 0;
+      mobileLook.dy = 0;
+    }
 
     const lerpFactor = direction.current.lengthSq() > 0 ? 0.18 : 0.12;
     _velTarget.current.copy(direction.current).multiplyScalar(MOVE_SPEED);
     velocity.current.lerp(_velTarget.current, lerpFactor);
     camera.position.addScaledVector(velocity.current, delta);
 
-    // Collisioni con ostacoli
-    resolveCollision(camera.position, 0.4);
 
     const BOUNDS = 28;
     camera.position.x = Math.max(-BOUNDS, Math.min(BOUNDS, camera.position.x));
