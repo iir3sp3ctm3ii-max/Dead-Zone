@@ -6,7 +6,9 @@ import Player from "./Player";
 import ZombieManager from "./ZombieManager";
 import EnvironmentComponent from "./Environment";
 import WeaponWalls from "./WeaponWall";
-import { WeaponId } from "./weapons";
+import MobileControls, { isMobile } from "./MobileControls";
+import { WeaponId, WEAPONS, WEAPON_ORDER } from "./weapons";
+import { mobileShootRef, mobileReloadRef, mobileSwitchRef } from "./Player";
 import { GameStats } from "@/pages/Game";
 
 export const isPausedRef = { current: false };
@@ -199,6 +201,15 @@ export default function GameScene({ stats, setStats, onGameOver, onWeaponNearCha
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <FPSCounter showFps={showFps} />
+
+      {/* Controlli mobile — solo su telefono */}
+      {isMobile && (
+        <MobileControls
+          onShoot={() => mobileShootRef.fn?.()}
+          onReload={() => mobileReloadRef.fn?.()}
+          onWeaponSwitch={(dir) => mobileSwitchRef.fn?.(dir)}
+        />
+      )}
       
       <KeyboardControls map={keyMap}>
       <Canvas
@@ -269,7 +280,7 @@ export default function GameScene({ stats, setStats, onGameOver, onWeaponNearCha
     <pointLight position={[0,   5, -26]} color="#5577cc" intensity={2.0} distance={26} decay={1.6} castShadow={false} />
     <pointLight position={[0,   5,  26]} color="#5577cc" intensity={2.0} distance={26} decay={1.6} castShadow={false} />
 
-    <PointerLockControls ref={pointerLockRef} />
+    {!isMobile && <PointerLockControls ref={pointerLockRef} />}
     <CameraReset />
     <EnvironmentComponent />
     <WeaponWalls stats={stats} setStats={setStats} onNearChange={onWeaponNearChange} />
