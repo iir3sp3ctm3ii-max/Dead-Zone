@@ -8,8 +8,11 @@
 
 ## 📋 Requisiti
 
-- [Node.js](https://nodejs.org) versione **18 o superiore**
-- npm (incluso con Node.js)
+💻 Requisiti Hardware
+📋 MINIMI
+ComponenteRequisitoGPUGTX 550 Ti / HD 6790RAM4 GBCPUIntel i3 6° gen / AMD FX-6130
+📋 CONSIGLIATI
+ComponenteRequisitoGPUGTX 750 Ti / RX 550RAM8 GBCPUIntel i5 7° gen / AMD FX-8320
 
 ---
 
