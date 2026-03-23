@@ -13,14 +13,14 @@
 |-----------|-----------|
 | GPU | GTX 550 Ti / HD 6790 |
 | RAM | 4 GB |
-| CPU | Intel i3 6° gen / AMD FX-6130 |
+| CPU | Intel i3 6100 / AMD FX-6130 |
  
 **📋 CONSIGLIATI**
 | Componente | Requisito |
 |-----------|-----------|
 | GPU | GTX 750 Ti / RX 550 |
 | RAM | 8 GB |
-| CPU | Intel i5 7° gen / AMD FX-8320 |
+| CPU | Intel i5 6400 / AMD FX-8320 |
 
 ---
 
