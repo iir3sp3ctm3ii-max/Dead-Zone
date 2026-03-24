@@ -266,6 +266,8 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
     velocity.current.lerp(_velTarget.current, lerpFactor);
     camera.position.addScaledVector(velocity.current, delta);
 
+    // Collisioni con ostacoli
+    resolveCollision(camera.position, 0.4);
 
     const BOUNDS = 28;
     camera.position.x = Math.max(-BOUNDS, Math.min(BOUNDS, camera.position.x));
