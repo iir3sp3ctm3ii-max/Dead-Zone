@@ -1,5 +1,4 @@
-// HUD.tsx — aggiornato con supporto mobile
-// Mostra automaticamente i controlli touch se il dispositivo ha touchscreen
+// HUD.tsx — con rilevamento touch affidabile + override manuale per DevTools
 import { useEffect, useState } from "react";
 import { GameStats } from "@/pages/Game";
 import MobileControls from "./MobileControls";
@@ -9,19 +8,34 @@ interface HUDProps {
   nearAmmoCrate: boolean;
 }
 
+// Lettura sincrona — usata sia nell'init che nei controlli
+function isTouchDevice() {
+  if (typeof window === "undefined") return false;
+  return (
+    "ontouchstart" in window ||
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia("(pointer: coarse)").matches
+  );
+}
+
 function useIsTouchDevice() {
-  const [isTouch, setIsTouch] = useState(false);
+  // Lazy init: legge subito senza aspettare useEffect
+  const [isTouch, setIsTouch] = useState<boolean>(() => isTouchDevice());
+
   useEffect(() => {
-    const check = () =>
-      setIsTouch(
-        "ontouchstart" in window ||
-        navigator.maxTouchPoints > 0 ||
-        window.matchMedia("(pointer: coarse)").matches
-      );
-    check();
+    const check = () => setIsTouch(isTouchDevice());
+    check(); // ri-controlla al mount (utile dopo SSR o DevTools toggle)
+
+    // Ascolta cambi di pointer media query (es. DevTools device emulation)
+    const mq = window.matchMedia("(pointer: coarse)");
+    mq.addEventListener("change", check);
     window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
+    return () => {
+      mq.removeEventListener("change", check);
+      window.removeEventListener("resize", check);
+    };
   }, []);
+
   return isTouch;
 }
 
@@ -32,9 +46,12 @@ export default function HUD({ stats, nearAmmoCrate }: HUDProps) {
     healthPercent > 30 ? "#ddaa22" :
     "#cc2222";
 
-  const isTouch = useIsTouchDevice();
+  const autoTouch = useIsTouchDevice();
+  // Override manuale: clicca 📱 in alto a sinistra per forzare la UI mobile
+  // (utile quando l'emulatore DevTools non viene rilevato automaticamente)
+  const [forceTouch, setForceTouch] = useState(false);
+  const isTouch = autoTouch || forceTouch;
 
-  // Offset verticale per non sovrapporre i controlli mobile
   const bottomOffset = isTouch ? 240 : 24;
 
   return (
@@ -45,6 +62,37 @@ export default function HUD({ stats, nearAmmoCrate }: HUDProps) {
       fontFamily: "'Courier New', monospace",
       userSelect: "none",
     }}>
+
+      {/* ── PULSANTE OVERRIDE MOBILE (angolo top-left, sempre visibile) ── */}
+      <div
+        onClick={() => setForceTouch(v => !v)}
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          width: 36,
+          height: 36,
+          borderRadius: "50%",
+          background: forceTouch
+            ? "rgba(221,170,51,0.85)"
+            : "rgba(0,0,0,0.45)",
+          border: forceTouch
+            ? "2px solid #ddaa33"
+            : "2px solid rgba(255,255,255,0.25)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 16,
+          cursor: "pointer",
+          pointerEvents: "auto",
+          zIndex: 200,
+          transition: "all 0.2s",
+          boxShadow: forceTouch ? "0 0 12px rgba(221,170,51,0.6)" : "none",
+        }}
+        title={forceTouch ? "Disattiva controlli mobile" : "Attiva controlli mobile"}
+      >
+        📱
+      </div>
 
       {/* ── MUNIZIONI (basso destra) ── */}
       <div style={{
@@ -163,7 +211,7 @@ export default function HUD({ stats, nearAmmoCrate }: HUDProps) {
         </div>
       </div>
 
-      {/* ── PROMPT CASSA — solo su desktop, su mobile c'è il pulsante E ── */}
+      {/* ── PROMPT CASSA — solo desktop ── */}
       {nearAmmoCrate && !isTouch && (
         <div style={{
           position: "absolute",
@@ -206,7 +254,7 @@ export default function HUD({ stats, nearAmmoCrate }: HUDProps) {
         }} />
       )}
 
-      {/* ── CONTROLLI MOBILE (solo touchscreen) ── */}
+      {/* ── CONTROLLI MOBILE ── */}
       {isTouch && <MobileControls nearAmmoCrate={nearAmmoCrate} />}
 
       <style>{`
