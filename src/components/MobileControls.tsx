@@ -1,252 +1,263 @@
+// MobileControls.tsx - Controlli touch per mobile
+// Joystick sinistro = movimento, pulsanti destra = azioni
+//
+// ARCHITETTURA:
+//   mobileJoystickRef  → scritto qui, letto da Player.tsx nel useFrame
+//   mobileActionsRef   → shoot/reload/buy assegnati da Player.tsx e AmmoCrate.tsx
+//
 import { useEffect, useRef, useCallback } from "react";
 
-// ── REFS GLOBALI — letti dal Player ogni frame ─────────────────
-export const mobileJoystick = {
-  x: 0,  // -1 (sinistra) → +1 (destra)
-  y: 0,  // -1 (indietro) → +1 (avanti)
+// ── Ref globali ─────────────────────────────────────────────────────
+export const mobileJoystickRef = {
+  current: { x: 0, y: 0 },  // x = strafe, y = avanti(−)/indietro(+)
 };
-export const mobileLook = {
-  dx: 0, // delta rotazione camera X
-  dy: 0, // delta rotazione camera Y
-};
-export const mobileShoot  = { current: false };
-export const mobileReload = { current: false };
-export const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
-  || (navigator.maxTouchPoints > 1);
 
-// ── COMPONENTE ─────────────────────────────────────────────────
+export const mobileActionsRef: {
+  shoot: (() => void) | null;
+  reload: (() => void) | null;
+  buy:    (() => void) | null;
+} = {
+  shoot:  null,
+  reload: null,
+  buy:    null,
+};
+// ────────────────────────────────────────────────────────────────────
+
 interface MobileControlsProps {
-  onShoot:  () => void;
-  onReload: () => void;
-  onWeaponSwitch: (dir: 1 | -1) => void;
+  nearAmmoCrate: boolean;
 }
 
-export default function MobileControls({ onShoot, onReload, onWeaponSwitch }: MobileControlsProps) {
-  // Joystick
-  const joystickRef     = useRef<HTMLDivElement>(null);
-  const knobRef         = useRef<HTMLDivElement>(null);
-  const joystickActive  = useRef(false);
-  const joystickOrigin  = useRef({ x: 0, y: 0 });
-  const joystickTouchId = useRef<number | null>(null);
-
-  // Camera swipe (metà destra dello schermo)
-  const lookTouchId   = useRef<number | null>(null);
-  const lookLast      = useRef({ x: 0, y: 0 });
+export default function MobileControls({ nearAmmoCrate }: MobileControlsProps) {
+  const joystickAreaRef = useRef<HTMLDivElement>(null);
+  const joystickKnobRef = useRef<HTMLDivElement>(null);
+  const joystickTouchIdRef = useRef<number | null>(null);
+  const joystickCenterRef = useRef({ x: 0, y: 0 });
 
   const JOYSTICK_RADIUS = 55;
 
-  // ── JOYSTICK ──────────────────────────────────────────────
-  const onJoystickStart = useCallback((e: React.TouchEvent) => {
-    const touch = e.changedTouches[0];
-    joystickTouchId.current = touch.identifier;
-    joystickActive.current  = true;
-    const rect = joystickRef.current!.getBoundingClientRect();
-    joystickOrigin.current = {
-      x: rect.left + rect.width  / 2,
-      y: rect.top  + rect.height / 2,
-    };
+  const updateJoystick = useCallback((touchX: number, touchY: number) => {
+    const cx = joystickCenterRef.current.x;
+    const cy = joystickCenterRef.current.y;
+    let dx = touchX - cx;
+    let dy = touchY - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > JOYSTICK_RADIUS) {
+      dx = (dx / dist) * JOYSTICK_RADIUS;
+      dy = (dy / dist) * JOYSTICK_RADIUS;
+    }
+    mobileJoystickRef.current = { x: dx / JOYSTICK_RADIUS, y: dy / JOYSTICK_RADIUS };
+    if (joystickKnobRef.current) {
+      joystickKnobRef.current.style.transform =
+        `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    }
+  }, []);
+
+  const resetJoystick = useCallback(() => {
+    mobileJoystickRef.current = { x: 0, y: 0 };
+    joystickTouchIdRef.current = null;
+    if (joystickKnobRef.current) {
+      joystickKnobRef.current.style.transform = "translate(-50%, -50%)";
+    }
   }, []);
 
   useEffect(() => {
+    const area = joystickAreaRef.current;
+    if (!area) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      joystickTouchIdRef.current = t.identifier;
+      const rect = area.getBoundingClientRect();
+      joystickCenterRef.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      updateJoystick(t.clientX, t.clientY);
+    };
     const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
       for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-
-        // Joystick
-        if (touch.identifier === joystickTouchId.current) {
-          const dx = touch.clientX - joystickOrigin.current.x;
-          const dy = touch.clientY - joystickOrigin.current.y;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          const clamped = Math.min(dist, JOYSTICK_RADIUS);
-          const angle   = Math.atan2(dy, dx);
-          const nx = Math.cos(angle) * clamped / JOYSTICK_RADIUS;
-          const ny = Math.sin(angle) * clamped / JOYSTICK_RADIUS;
-          mobileJoystick.x = nx;
-          mobileJoystick.y = -ny; // y invertita: su = avanti
-          if (knobRef.current) {
-            knobRef.current.style.transform =
-              `translate(calc(-50% + ${nx * JOYSTICK_RADIUS}px), calc(-50% + ${-ny * JOYSTICK_RADIUS * -1}px))`;
-            // correzione: schermo Y down = ny positivo = back
-            knobRef.current.style.transform =
-              `translate(calc(-50% + ${nx * JOYSTICK_RADIUS}px), calc(-50% + ${Math.sin(angle)*clamped}px))`;
-          }
-        }
-
-        // Camera look
-        if (touch.identifier === lookTouchId.current) {
-          mobileLook.dx += (touch.clientX - lookLast.current.x) * 0.003;
-          mobileLook.dy += (touch.clientY - lookLast.current.y) * 0.003;
-          lookLast.current = { x: touch.clientX, y: touch.clientY };
-        }
+        if (e.changedTouches[i].identifier === joystickTouchIdRef.current)
+          updateJoystick(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
       }
     };
-
     const onTouchEnd = (e: TouchEvent) => {
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.identifier === joystickTouchId.current) {
-          joystickTouchId.current = null;
-          joystickActive.current  = false;
-          mobileJoystick.x = 0;
-          mobileJoystick.y = 0;
-          if (knobRef.current) {
-            knobRef.current.style.transform = "translate(-50%, -50%)";
-          }
-        }
-        if (touch.identifier === lookTouchId.current) {
-          lookTouchId.current = null;
-        }
-      }
+      e.preventDefault();
+      for (let i = 0; i < e.changedTouches.length; i++)
+        if (e.changedTouches[i].identifier === joystickTouchIdRef.current) resetJoystick();
     };
 
-    window.addEventListener("touchmove",  onTouchMove,  { passive: true });
-    window.addEventListener("touchend",   onTouchEnd,   { passive: true });
-    window.addEventListener("touchcancel",onTouchEnd,   { passive: true });
+    area.addEventListener("touchstart", onTouchStart, { passive: false });
+    area.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    area.addEventListener("touchend",   onTouchEnd,   { passive: false });
+    area.addEventListener("touchcancel",onTouchEnd,   { passive: false });
     return () => {
-      window.removeEventListener("touchmove",  onTouchMove);
-      window.removeEventListener("touchend",   onTouchEnd);
-      window.removeEventListener("touchcancel",onTouchEnd);
+      area.removeEventListener("touchstart", onTouchStart);
+      area.removeEventListener("touchmove",  onTouchMove);
+      area.removeEventListener("touchend",   onTouchEnd);
+      area.removeEventListener("touchcancel",onTouchEnd);
     };
-  }, []);
-
-  const onLookStart = useCallback((e: React.TouchEvent) => {
-    // Solo se il touch parte nella metà destra e non è già attivo
-    if (lookTouchId.current !== null) return;
-    const touch = e.changedTouches[0];
-    if (touch.clientX < window.innerWidth * 0.45) return;
-    lookTouchId.current = touch.identifier;
-    lookLast.current    = { x: touch.clientX, y: touch.clientY };
-    e.preventDefault();
-  }, []);
-
-  if (!isMobile) return null;
+  }, [updateJoystick, resetJoystick]);
 
   return (
-    <div
-      style={{
-        position: "fixed", inset: 0,
-        pointerEvents: "none",
-        zIndex: 50,
-        userSelect: "none",
-        WebkitUserSelect: "none",
-      }}
-      onTouchStart={onLookStart}
-    >
-      {/* ── JOYSTICK SINISTRO ─────────────────────────── */}
+    <div style={{
+      position: "absolute",
+      bottom: 0, left: 0, right: 0,
+      height: "220px",
+      pointerEvents: "none",
+      display: "flex",
+      alignItems: "flex-end",
+      justifyContent: "space-between",
+      padding: "0 20px 28px 20px",
+      zIndex: 50,
+    }}>
+
+      {/* ──────────── JOYSTICK SINISTRO ──────────── */}
       <div
-        ref={joystickRef}
-        onTouchStart={onJoystickStart}
+        ref={joystickAreaRef}
         style={{
-          position: "absolute",
-          bottom: 40, left: 40,
-          width:  120, height: 120,
+          width: 140, height: 140,
           borderRadius: "50%",
-          background: "rgba(255,255,255,0.08)",
-          border: "2px solid rgba(255,255,255,0.25)",
+          background: "rgba(0,0,0,0.35)",
+          border: "2px solid rgba(255,255,255,0.18)",
+          boxShadow: "0 0 24px rgba(0,0,0,0.5), inset 0 0 30px rgba(0,0,0,0.3)",
+          position: "relative",
           pointerEvents: "auto",
-          touchAction: "none",
+          backdropFilter: "blur(6px)",
+          flexShrink: 0,
         }}
       >
-        {/* Knob */}
+        {/* anello interno decorativo */}
+        <div style={{
+          position: "absolute", top: "50%", left: "50%",
+          transform: "translate(-50%,-50%)",
+          width: 90, height: 90, borderRadius: "50%",
+          border: "1px solid rgba(255,255,255,0.1)",
+          pointerEvents: "none",
+        }} />
+
+        {/* frecce cardinali */}
+        {[
+          { top: 10, left: "50%", label: "▲", ml: -6, mt: 0 },
+          { bottom: 10, left: "50%", label: "▼", ml: -6, mt: 0 },
+          { left: 10, top: "50%", label: "◀", ml: 0, mt: -8 },
+          { right: 10, top: "50%", label: "▶", ml: 0, mt: -8 },
+        ].map(({ label, ml, mt, ...pos }, i) => (
+          <div key={i} style={{
+            position: "absolute", ...pos,
+            marginLeft: ml, marginTop: mt,
+            color: "rgba(255,255,255,0.28)",
+            fontSize: 12, pointerEvents: "none", userSelect: "none",
+          }}>{label}</div>
+        ))}
+
+        {/* knob */}
         <div
-          ref={knobRef}
+          ref={joystickKnobRef}
           style={{
-            position: "absolute",
-            top: "50%", left: "50%",
+            position: "absolute", top: "50%", left: "50%",
             transform: "translate(-50%, -50%)",
-            width: 48, height: 48,
-            borderRadius: "50%",
-            background: "rgba(255,255,255,0.35)",
-            border: "2px solid rgba(255,255,255,0.6)",
-            transition: "transform 0.05s",
+            width: 50, height: 50, borderRadius: "50%",
+            background: "linear-gradient(135deg, rgba(255,255,255,0.28), rgba(255,255,255,0.08))",
+            border: "2px solid rgba(255,255,255,0.45)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.55)",
+            transition: "transform 0.05s ease-out",
             pointerEvents: "none",
           }}
         />
       </div>
 
-      {/* ── PULSANTE SPARA ────────────────────────────── */}
+      {/* ──────────── PULSANTI DESTRA ──────────── */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 14, pointerEvents: "auto" }}>
+
+        {/* SPARA — grande */}
+        <ActionButton
+          label="🔫"
+          sublabel="SPARA"
+          color="#cc2222"
+          glowColor="rgba(204,34,34,0.6)"
+          size={72}
+          onPress={() => mobileActionsRef.shoot?.()}
+        />
+
+        {/* RICARICA + MUNIZIONI — piccoli, su riga */}
+        <div style={{ display: "flex", gap: 14 }}>
+          <ActionButton
+            label="R"
+            sublabel="RICARICA"
+            color="#555555"
+            glowColor="rgba(150,150,150,0.4)"
+            size={56}
+            onPress={() => mobileActionsRef.reload?.()}
+          />
+          {nearAmmoCrate && (
+            <ActionButton
+              label="E"
+              sublabel="500 pt"
+              color="#997700"
+              glowColor="rgba(221,170,51,0.55)"
+              size={56}
+              onPress={() => mobileActionsRef.buy?.()}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Pulsante azione generico ─── */
+function ActionButton({
+  label, sublabel, color, glowColor, size, onPress,
+}: {
+  label: string;
+  sublabel: string;
+  color: string;
+  glowColor: string;
+  size: number;
+  onPress: () => void;
+}) {
+  const btnRef = useRef<HTMLDivElement>(null);
+
+  const press = (e: React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (btnRef.current) { btnRef.current.style.transform = "scale(0.87)"; btnRef.current.style.opacity = "0.72"; }
+    onPress();
+  };
+  const release = (e: React.TouchEvent) => {
+    e.preventDefault();
+    if (btnRef.current) { btnRef.current.style.transform = "scale(1)"; btnRef.current.style.opacity = "1"; }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
       <div
-        onTouchStart={(e) => { e.preventDefault(); onShoot(); }}
+        ref={btnRef}
+        onTouchStart={press}
+        onTouchEnd={release}
+        onTouchCancel={release}
         style={{
-          position: "absolute",
-          bottom: 60, right: 160,
-          width: 72, height: 72,
-          borderRadius: "50%",
-          background: "rgba(220,30,30,0.75)",
-          border: "3px solid rgba(255,80,80,0.8)",
+          width: size, height: size, borderRadius: "50%",
+          background: `radial-gradient(circle at 35% 35%, ${color}cc, ${color}55)`,
+          border: `2px solid ${color}`,
+          boxShadow: `0 0 18px ${glowColor}, inset 0 1px 0 rgba(255,255,255,0.18)`,
           display: "flex", alignItems: "center", justifyContent: "center",
-          pointerEvents: "auto",
-          touchAction: "none",
-          boxShadow: "0 0 20px rgba(220,30,30,0.5)",
+          fontSize: size > 60 ? 28 : 20, fontWeight: "bold", color: "#ffffff",
+          fontFamily: "'Courier New', monospace",
+          cursor: "pointer", userSelect: "none", WebkitUserSelect: "none",
+          transition: "transform 0.08s ease, opacity 0.08s ease",
+          backdropFilter: "blur(4px)",
         }}
       >
-        <span style={{ color: "#fff", fontSize: 11, fontWeight: 900, letterSpacing: 1, textTransform: "uppercase" }}>
-          SPARA
-        </span>
+        {label}
       </div>
-
-      {/* ── PULSANTE RICARICA ─────────────────────────── */}
-      <div
-        onTouchStart={(e) => { e.preventDefault(); onReload(); }}
-        style={{
-          position: "absolute",
-          bottom: 150, right: 50,
-          width: 60, height: 60,
-          borderRadius: "50%",
-          background: "rgba(255,170,0,0.75)",
-          border: "3px solid rgba(255,200,80,0.8)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          pointerEvents: "auto",
-          touchAction: "none",
-          boxShadow: "0 0 16px rgba(255,170,0,0.4)",
-        }}
-      >
-        <span style={{ color: "#fff", fontSize: 10, fontWeight: 900, letterSpacing: 1, textTransform: "uppercase" }}>
-          RICARICA
-        </span>
-      </div>
-
-      {/* ── FRECCE CAMBIO ARMA ────────────────────────── */}
       <div style={{
-        position: "absolute",
-        bottom: 40, right: 40,
-        display: "flex", gap: 8,
-        pointerEvents: "auto",
+        color: "rgba(255,255,255,0.45)",
+        fontSize: 9, letterSpacing: 1.5,
+        fontFamily: "'Courier New', monospace",
+        fontWeight: "bold", textTransform: "uppercase",
       }}>
-        <div
-          onTouchStart={(e) => { e.preventDefault(); onWeaponSwitch(-1); }}
-          style={{
-            width: 44, height: 44, borderRadius: 10,
-            background: "rgba(100,100,100,0.6)",
-            border: "2px solid rgba(255,255,255,0.3)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            touchAction: "none",
-          }}
-        >
-          <span style={{ color: "#fff", fontSize: 18 }}>◀</span>
-        </div>
-        <div
-          onTouchStart={(e) => { e.preventDefault(); onWeaponSwitch(1); }}
-          style={{
-            width: 44, height: 44, borderRadius: 10,
-            background: "rgba(100,100,100,0.6)",
-            border: "2px solid rgba(255,255,255,0.3)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            touchAction: "none",
-          }}
-        >
-          <span style={{ color: "#fff", fontSize: 18 }}>▶</span>
-        </div>
+        {sublabel}
       </div>
-
-      {/* ── AREA CAMERA (destra) — indicatore visivo ──── */}
-      <div style={{
-        position: "absolute",
-        top: 0, right: 0,
-        width: "55%", height: "100%",
-        background: "transparent",
-        pointerEvents: "none",
-      }} />
     </div>
   );
 }
