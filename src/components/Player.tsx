@@ -62,12 +62,6 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
 
   useEffect(() => { statsRef.current = stats; }, [stats]);
 
-  // Imposta camera per mobile (YXZ order, angolo iniziale)
-  useEffect(() => {
-    camera.rotation.order = "YXZ";
-    camera.position.set(0, PLAYER_HEIGHT, 0);
-  }, [camera]);
-
   // Regen salute
   useEffect(() => {
     healthRegenTimer.current = setInterval(() => {
@@ -95,7 +89,7 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
     _shootDir.current.normalize();
 
     for (let i = 0; i < wpn.pellets; i++) {
-      const dir = _shootDir.current.clone();
+      const dir = _shootDir.current.clone(); // clone solo per i pellet — necessario
       if (wpn.spread > 0) {
         dir.x += (Math.random() - 0.5) * wpn.spread * 2;
         dir.y += (Math.random() - 0.5) * wpn.spread;
@@ -156,7 +150,14 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
     if (reloadTimer.current) { clearTimeout(reloadTimer.current); reloadTimer.current = null; }
 
     const wpn = WEAPONS[id];
-    ammoCache[s.currentWeapon ?? "pistol"] = { ammo: s.ammo, reserve: s.reserveAmmo };
+
+    // Salva munizioni arma corrente nella cache locale
+    ammoCache[s.currentWeapon ?? "pistol"] = {
+      ammo:    s.ammo,
+      reserve: s.reserveAmmo,
+    };
+
+    // Carica munizioni arma nuova (dalla cache se già usata, altrimenti default)
     const cached = ammoCache[id];
 
     setStats(prev => ({
@@ -170,6 +171,7 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
   }, [setStats]);
 
   // ── EVENTI ─────────────────────────────────────────────────
+  // Collega funzioni ai ref mobile
   useEffect(() => {
     mobileShootRef.fn  = shoot;
     mobileReloadRef.fn = reload;
@@ -188,7 +190,6 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
   }, [shoot, reload, switchWeapon]);
 
   useEffect(() => {
-    if (isMobile) return; // su mobile: gestito dai pulsanti touch
     const onMouseDown = (e: MouseEvent) => {
       if (!document.pointerLockElement || e.button !== 0 || isPausedRef.current) return;
       mouseDownRef.current = true;
@@ -218,9 +219,11 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
     };
   }, [shoot, reload, switchWeapon]);
 
+  useEffect(() => { camera.position.set(0, PLAYER_HEIGHT, 0); }, [camera]);
+
   // Vettori riusati — zero allocazioni per frame
-  const _camDir    = useRef(new THREE.Vector3());
-  const _sideDir   = useRef(new THREE.Vector3());
+  const _camDir  = useRef(new THREE.Vector3());
+  const _sideDir = useRef(new THREE.Vector3());
   const _velTarget = useRef(new THREE.Vector3());
 
   // ── FRAME LOOP ─────────────────────────────────────────────
@@ -229,21 +232,12 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
 
     const { forward, back, left, right } = getKeys();
 
+    // Input mobile joystick
     const mj = mobileJoystick;
     const mForward = forward || mj.y >  0.15;
     const mBack    = back    || mj.y < -0.15;
     const mLeft    = left    || mj.x < -0.15;
     const mRight   = right   || mj.x >  0.15;
-
-    // ── Camera look da swipe mobile ──────────────────────────
-    if (isMobile && (mobileLook.dx !== 0 || mobileLook.dy !== 0)) {
-      camera.rotation.order = "YXZ";
-      camera.rotation.y -= mobileLook.dx;
-      camera.rotation.x -= mobileLook.dy;
-      camera.rotation.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, camera.rotation.x));
-      mobileLook.dx = 0;
-      mobileLook.dy = 0;
-    }
 
     direction.current.set(0, 0, 0);
     camera.getWorldDirection(_camDir.current);
@@ -251,16 +245,27 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
     _camDir.current.normalize();
     _sideDir.current.set(-_camDir.current.z, 0, _camDir.current.x);
 
-    if (mForward) direction.current.addScaledVector(_camDir.current,   Math.max(1, Math.abs(mj.y)));
-    if (mBack)    direction.current.addScaledVector(_camDir.current,  -Math.max(1, Math.abs(mj.y)));
+    if (mForward) direction.current.addScaledVector(_camDir.current, Math.max(1, Math.abs(mj.y)));
+    if (mBack)    direction.current.addScaledVector(_camDir.current, -Math.max(1, Math.abs(mj.y)));
     if (mLeft)    direction.current.addScaledVector(_sideDir.current, -Math.max(1, Math.abs(mj.x)));
     if (mRight)   direction.current.addScaledVector(_sideDir.current,  Math.max(1, Math.abs(mj.x)));
     if (direction.current.lengthSq() > 0) direction.current.normalize();
+
+    // Camera look da swipe mobile
+    if (isMobile && (mobileLook.dx !== 0 || mobileLook.dy !== 0)) {
+      camera.rotation.order = "YXZ";
+      camera.rotation.y -= mobileLook.dx;
+      camera.rotation.x -= mobileLook.dy;
+      camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+      mobileLook.dx = 0;
+      mobileLook.dy = 0;
+    }
 
     const lerpFactor = direction.current.lengthSq() > 0 ? 0.18 : 0.12;
     _velTarget.current.copy(direction.current).multiplyScalar(MOVE_SPEED);
     velocity.current.lerp(_velTarget.current, lerpFactor);
     camera.position.addScaledVector(velocity.current, delta);
+
 
     const BOUNDS = 28;
     camera.position.x = Math.max(-BOUNDS, Math.min(BOUNDS, camera.position.x));
@@ -268,20 +273,20 @@ export default function Player({ stats, setStats, onGameOver }: PlayerProps) {
     camera.position.y = PLAYER_HEIGHT;
     playerPositionRef.current.copy(camera.position);
 
-    // Auto-fire SMG (desktop)
+    // Auto-fire SMG
     const wpn = WEAPONS[statsRef.current.currentWeapon ?? "pistol"];
-    if (!isMobile && wpn.auto && mouseDownRef.current && !statsRef.current.isReloading) {
+    if (wpn.auto && mouseDownRef.current && !statsRef.current.isReloading) {
       autoFireTimer.current += delta;
       if (autoFireTimer.current >= 1 / wpn.fireRate) {
         autoFireTimer.current = 0;
         shoot();
       }
-    } else if (!isMobile) {
+    } else {
       autoFireTimer.current = 0;
     }
 
     // Passi
-    const isMoving = mForward || mBack || mLeft || mRight;
+    const isMoving = forward || back || left || right;
     if (isMoving) {
       walkingStepTimeRef.current += delta;
       if (walkingStepTimeRef.current >= walkingNextStepTimeRef.current) {
