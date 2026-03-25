@@ -1,15 +1,13 @@
 import { Canvas, useThree } from "@react-three/fiber";
-import { KeyboardControls, PointerLockControls, Stars } from "@react-three/drei";
+import { KeyboardControls, PointerLockControls, Sky, Stars } from "@react-three/drei";
 import { Suspense, useRef, useState, useEffect, useCallback } from "react";
 import * as THREE from "three";
 import Player from "./Player";
 import ZombieManager from "./ZombieManager";
 import EnvironmentComponent from "./Environment";
-import WeaponWalls from "./WeaponWall";
-import MobileControls, { isMobile } from "./MobileControls";
-import { WeaponId, WEAPONS, WEAPON_ORDER } from "./weapons";
-import { mobileShootRef, mobileReloadRef, mobileSwitchRef } from "./Player";
+import AmmoCrate from "./AmmoCrate";
 import { GameStats } from "@/pages/Game";
+import MobileControls, { mobileJoystickRef, mobileActionsRef } from "./MobileControls";
 
 export const isPausedRef = { current: false };
 export const ambientAudioRef = { current: null as HTMLAudioElement | null };
@@ -32,7 +30,7 @@ interface GameSceneProps {
   stats: GameStats;
   setStats: React.Dispatch<React.SetStateAction<GameStats>>;
   onGameOver: () => void;
-  onWeaponNearChange: (id: WeaponId, near: boolean) => void;
+  onAmmoCrateNearChange: (near: boolean) => void;
 }
 
 // ✅ ELIMINATO ShadowManager (inutile) - MANTENUTO solo FPSCounter
@@ -103,24 +101,80 @@ function FPSCounter({ showFps }: { showFps: boolean }) {
 }
 
 
-// Resetta camera e PointerLockControls a guardare dritto all'avvio
-function CameraReset() {
-  const { camera } = useThree();
-  useEffect(() => {
-    camera.rotation.order = "YXZ";
-    camera.rotation.set(0, 0, 0);
-    camera.quaternion.identity();
-  }, []); // solo al mount, niente rAF
-  return null;
+// ── Rilevamento mobile ──────────────────────────────────────────
+function isTouchDevice() {
+  if (typeof window === "undefined") return false;
+  return "ontouchstart" in window || navigator.maxTouchPoints > 0 || window.matchMedia("(pointer: coarse)").matches;
 }
 
-export default function GameScene({ stats, setStats, onGameOver, onWeaponNearChange }: GameSceneProps) {
+// ── Look control da touch (lato destro dello schermo) ────────────
+const mobileLookRef = { current: { active: false, lastX: 0, lastY: 0 } };
+
+// Componente look-touch: si monta SOLO su mobile, dentro il Canvas
+function MobileLookArea() {
+  const { camera } = useThree();
+  const euler = useRef(new THREE.Euler(0, 0, 0, "YXZ"));
+  useEffect(() => {
+    // Inizializza dall'orientamento attuale della camera
+    euler.current.setFromQuaternion(camera.quaternion, "YXZ");
+  }, [camera]);
+
+  useEffect(() => {
+    const onTouchStart = (e: TouchEvent) => {
+      // Solo tocchi nella metà DESTRA dello schermo
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (t.clientX > window.innerWidth / 2) {
+          mobileLookRef.current = { active: true, lastX: t.clientX, lastY: t.clientY };
+        }
+      }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!mobileLookRef.current.active) return;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (t.clientX > window.innerWidth / 2) {
+          const dx = t.clientX - mobileLookRef.current.lastX;
+          const dy = t.clientY - mobileLookRef.current.lastY;
+          mobileLookRef.current.lastX = t.clientX;
+          mobileLookRef.current.lastY = t.clientY;
+          euler.current.y -= dx * 0.004;
+          euler.current.x -= dy * 0.004;
+          euler.current.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, euler.current.x));
+          camera.quaternion.setFromEuler(euler.current);
+        }
+      }
+    };
+    const onTouchEnd = () => { mobileLookRef.current.active = false; };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove",  onTouchMove,  { passive: true });
+    window.addEventListener("touchend",   onTouchEnd,   { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove",  onTouchMove);
+      window.removeEventListener("touchend",   onTouchEnd);
+    };
+  }, [camera]);
+  return null;
+}
+// ────────────────────────────────────────────────────────────────
+
+export default function GameScene({ stats, setStats, onGameOver, onAmmoCrateNearChange }: GameSceneProps) {
   const pointerLockRef = useRef<any>(null);
+  const [isTouch, setIsTouch] = useState<boolean>(() => isTouchDevice());
+  const [nearAmmoCrate, setNearAmmoCrate] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [shadowsEnabled, setShadowsEnabled] = useState(true);
   const [antialiasMode, setAntialiasMode] = useState(0); // 0=BASSE, 1=ALTE
   const [showFps, setShowFps] = useState(true);
   const [graphicsExpanded, setGraphicsExpanded] = useState(false);
+
+  // Aggiorna rilevamento touch al resize/orientamento
+  useEffect(() => {
+    const check = () => setIsTouch(isTouchDevice());
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // ✅ SEMPLICE - NESSUN REF COMPLICATO
   useEffect(() => {
@@ -201,89 +255,119 @@ export default function GameScene({ stats, setStats, onGameOver, onWeaponNearCha
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <FPSCounter showFps={showFps} />
-
-      {/* Controlli mobile — solo su telefono */}
-      {isMobile && (
-        <MobileControls
-          onShoot={() => mobileShootRef.fn?.()}
-          onReload={() => mobileReloadRef.fn?.()}
-          onWeaponSwitch={(dir) => mobileSwitchRef.fn?.(dir)}
-        />
-      )}
       
       <KeyboardControls map={keyMap}>
       <Canvas
+  key={`graphics-${shadowsEnabled}-${antialiasMode}`}
   shadows={shadowsEnabled}
-  camera={{ fov: 75, near: 0.1, far: 180, position: [0, 1.7, 0] }}
-  gl={{
-    antialias: false,              // GTX: antialias OFF di default, costa molto
-    powerPreference: "high-performance",
+  camera={{ fov: 75, near: 0.1, far: 250, position: [0, 1.7, 0] }}
+  gl={{ 
+    antialias: antialiasMode === 1,
+    powerPreference: "high-performance", 
     alpha: false,
-    stencil: false,                // GTX: disabilita stencil buffer — non serve
-    depth: true,
-    toneMapping: THREE.ReinhardToneMapping,   // Reinhard è più leggero di ACESFilmic
-    toneMappingExposure: 1.4,      // Abbassato — previene flickering su luci dinamiche
-    precision: "mediump",
+    toneMapping: THREE.ACESFilmicToneMapping,
+    toneMappingExposure: 1.4
   }}
-  performance={{ min: 0.5, max: 1 }}
-  frameloop="always"
-  dpr={[1, 1.5]}                  // GTX: limita DPR a max 1.5 invece di 2
 >
-  <color attach="background" args={["#0a0810"]} />
+  <color attach="background" args={["#87CEEB"]} />
   <Suspense fallback={null}>
+    <Sky distance={450000} sunPosition={[100, 100, 50]} inclination={0.4} azimuth={0.15} rayleigh={1.1} turbidity={1.5} mieCoefficient={0.003} mieDirectionalG={0.9} />
+    <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={isPausedRef.current ? 0 : 1} />
 
-    {/* STELLE */}
-    <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} speed={0} />
-
-    {/* LUNA */}
-    <mesh position={[55, 75, -110]}>
-      <sphereGeometry args={[7, 16, 16]} />
-      <meshBasicMaterial color="#ffe8c0" />
-    </mesh>
-
-    {/* NEBBIA leggera — visibilità 22→58 unità */}
-    <fog attach="fog" args={["#0e0810", 22, 58]} />
-
-    {/* AMBIENT */}
-    <ambientLight intensity={0.45} color="#1e1a2e" />
-
-    {/* LUCE LUNA — copre tutta la mappa, ombre scure */}
-    {shadowsEnabled ? (
-      <directionalLight
-        position={[55, 75, -110]}
-        intensity={2.0}
-        color="#ddeeff"
-        castShadow
+    {/* DIRECTIONAL LIGHT - GTX 1650 BASSE */}
+    {shadowsEnabled && antialiasMode === 0 && (
+      <directionalLight 
+        position={[80, 60, 40]} 
+        intensity={3.0}
+        color="#e0d0aa" 
+        castShadow={true}
         shadow-mapSize={[2048, 2048]}
-        shadow-bias={-0.0002}
-        shadow-normalBias={0.02}
-        shadow-camera-near={1}
-        shadow-camera-far={220}
-        shadow-camera-left={-60}
-        shadow-camera-right={60}
-        shadow-camera-top={60}
-        shadow-camera-bottom={-60}
-        shadow-radius={0.5}
+        shadow-bias={-0.00008}
+        shadow-normalBias={0.025}
+        shadow-camera-near={0.3} 
+        shadow-camera-far={120} 
+        shadow-camera-left={-40} 
+        shadow-camera-right={40} 
+        shadow-camera-top={40} 
+        shadow-camera-bottom={-40}
       />
-    ) : (
-      <directionalLight position={[55, 75, -110]} intensity={2.0} color="#ddeeff" />
     )}
 
-    {/* FILL — no shadow */}
-    <directionalLight position={[-30, 8, 40]} intensity={0.6} color="#cc6633" />
-    <directionalLight position={[ 50, 20, 0]} intensity={0.35} color="#442233" />
+{/* DIRECTIONAL LIGHT - RTX 3060 ALTE (+25% pesante SOLO risoluzioni) */}
+{shadowsEnabled && antialiasMode === 1 && (
+  <directionalLight 
+    position={[80, 60, 40]} 
+    intensity={3.0}
+    color="#d4c4a0" 
+    castShadow={true}
+    shadow-mapSize={[10125, 10125]}      // +25% da 8100
+    shadow-bias={-0.00009}
+    shadow-normalBias={0.007}
+    shadow-camera-near={0.08} 
+    shadow-camera-far={175} 
+    shadow-camera-left={-55} 
+    shadow-camera-right={55} 
+    shadow-camera-top={55} 
+    shadow-camera-bottom={-55}
+    shadow-radius={9.9}
+    shadow-samples={47}
+  />
+)}
 
-    {/* COPERTURA — castShadow={false} su tutte per evitare flickering */}
-    <pointLight position={[0,   7,   0]} color="#ff8844" intensity={3.8} distance={48} decay={1.3} castShadow={false} />
-    <pointLight position={[-16, 6, -16]} color="#ee6633" intensity={2.8} distance={34} decay={1.5} castShadow={false} />
-    <pointLight position={[ 16, 6,  16]} color="#ee6633" intensity={2.8} distance={34} decay={1.5} castShadow={false} />
-    <pointLight position={[0,   5, -26]} color="#5577cc" intensity={2.0} distance={26} decay={1.6} castShadow={false} />
-    <pointLight position={[0,   5,  26]} color="#5577cc" intensity={2.0} distance={26} decay={1.6} castShadow={false} />
 
-    {!isMobile && <PointerLockControls ref={pointerLockRef} />}
-    <CameraReset />
+    {/* POINT LIGHT - GTX 1650 BASSE */}
+    {shadowsEnabled && antialiasMode === 0 && (
+      <pointLight 
+        position={[-30, 8, -40]}
+        intensity={1.2}
+        color="#dd7777" 
+        distance={60} 
+        decay={2.1} 
+        castShadow={true}
+        shadow-mapSize={[1024, 1024]}
+      />
+    )}
+
+{/* POINT LIGHT - RTX 3060 ALTE (+25% pesante SOLO risoluzioni) */}
+{shadowsEnabled && antialiasMode === 1 && (
+  <pointLight 
+    position={[-30, 8, -40]}
+    intensity={1.2}
+    color="#cc6655" 
+    distance={73} 
+    decay={1.7} 
+    castShadow={true}
+    shadow-mapSize={[5062, 5062]}        // +25% da 4050
+    shadow-bias={-0.00008}
+    shadow-radius={8.0}
+    shadow-samples={39}
+  />
+)}
+
+    {/* LUCI FILL - GTX 1650 BASSE */}
+    {shadowsEnabled && antialiasMode === 0 && (
+      <>
+        <directionalLight position={[-40, 30, -25]} intensity={0.95} color="#d0e0f0" />
+        <directionalLight position={[20, 25, -35]} intensity={0.8} color="#f0d8aa" />
+        <directionalLight position={[0, 30, -50]} intensity={0.9} color="#e8c8a8" />
+        <ambientLight intensity={0.55} color="#c0d0e0" />
+      </>
+    )}
+
+    {/* LUCI FILL - RTX 3060 ALTE */}
+    {shadowsEnabled && antialiasMode === 1 && (
+      <>
+        <directionalLight position={[-40, 30, -25]} intensity={0.95} color="#c8d8e8" />
+        <directionalLight position={[20, 25, -35]} intensity={0.8} color="#e0c888" />
+        <directionalLight position={[0, 30, -50]} intensity={0.9} color="#d8b888" />
+        <ambientLight intensity={0.55} color="#b0c0d0" />
+      </>
+    )}
+
+    {!isTouch && <PointerLockControls ref={pointerLockRef} />}
+    {isTouch && <MobileLookArea />}
     <EnvironmentComponent />
-    <WeaponWalls stats={stats} setStats={setStats} onNearChange={onWeaponNearChange} />
+    <AmmoCrate stats={stats} setStats={setStats} onNearChange={(near) => { onAmmoCrateNearChange(near); setNearAmmoCrate(near); }} />
     <Player stats={stats} setStats={setStats} onGameOver={onGameOver} />
     <ZombieManager stats={stats} setStats={setStats} />
   </Suspense>
@@ -482,7 +566,7 @@ export default function GameScene({ stats, setStats, onGameOver, onWeaponNearCha
     animation: "slideDown 0.4s cubic-bezier(0.4, 0, 0.2, 1)"
   }}>
     
-    {/* 1. FPS COUNTER */}
+    {/* 1. FPS COUNTER - IDENTICO */}
     <div style={{
       background: `radial-gradient(ellipse at top left, var(--glass-grey) 0%, transparent 50%), linear-gradient(145deg, var(--grey-void) 0%, var(--onyx) 50%, var(--carbon-black) 100%)`,
       padding: "clamp(24px, 2.9vw, 32px)",
@@ -507,8 +591,120 @@ export default function GameScene({ stats, setStats, onGameOver, onWeaponNearCha
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)", transform: showFps ? "translateX(26px)" : "translateX(2px)", position: "absolute", left: 0}} />
       </div>
     </div>
+
+    {/* 2. OMBRE DINAMICHE - IDENTICO */}
+    <div style={{
+      background: `radial-gradient(ellipse at top right, var(--glass-grey) 0%, transparent 50%), linear-gradient(145deg, var(--grey-void) 0%, var(--onyx) 50%, var(--carbon-black) 100%)`,
+      padding: "clamp(24px, 2.9vw, 32px)",
+      borderRadius: "24px",
+      border: "2px solid rgba(156,163,175,0.7)",
+      backdropFilter: "blur(35px) saturate(150%) brightness(1.4)",
+      boxShadow: `0 25px 60px rgba(156,163,175,0.4), 0 12px 32px rgba(0,0,0,0.7), 0 0 40px rgba(156,163,175,0.2)`,
+      position: "relative", overflow: "hidden",
+      display: "flex", alignItems: "center", justifyContent: "space-between"
+    }}>
+      <div style={{position: "absolute", top: 0, left: 0, right: 0, height: "4px", background: "linear-gradient(90deg, var(--steel-grey), var(--silver-grey))", boxShadow: "0 0 16px rgba(156,163,175,0.8)"}} />
+      <div style={{color: "var(--steel-grey)", fontSize: "clamp(12px, 1.5vw, 15px)", fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase"}}>
+        Ombre Dinamiche
+      </div>
+      <div onClick={handleShadowsToggle} style={{
+        width: "56px", height: "32px", borderRadius: "24px",
+        background: shadowsEnabled ? "linear-gradient(135deg, var(--steel-grey), var(--silver-grey))" : "rgba(156,163,175,0.3)",
+        border: "2px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", position: "relative", cursor: "pointer",
+        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)", boxShadow: shadowsEnabled ? "0 8px 24px rgba(156,163,175,0.5)" : "none"
+      }}>
+        <div style={{width: "24px", height: "24px", borderRadius: "50%", background: "var(--white)", boxShadow: "0 4px 12px rgba(0,0,0,0.4)", 
+          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)", transform: shadowsEnabled ? "translateX(26px)" : "translateX(2px)", position: "absolute", left: 0}} />
+      </div>
+    </div>
+
+    {/* 3. QUALITÀ OMBRE - PULSANTI CHE CAMBIANO REALMENTE LA QUALITÀ! */}
+    <div style={{
+      background: `radial-gradient(ellipse at top left, var(--glass-grey) 0%, transparent 50%), linear-gradient(145deg, var(--grey-void) 0%, var(--onyx) 50%, var(--carbon-black) 100%)`,
+      padding: "clamp(20px, 2.5vw, 28px)",
+      borderRadius: "24px",
+      border: "2px solid rgba(156,163,175,0.7)",
+      backdropFilter: "blur(35px) saturate(150%) brightness(1.4)",
+      boxShadow: `0 25px 60px rgba(156,163,175,0.4), 0 12px 32px rgba(0,0,0,0.7), 0 0 40px rgba(156,163,175,0.2)`,
+      position: "relative", overflow: "hidden"
+    }}>
+      <div style={{position: "absolute", top: 0, left: 0, right: 0, height: "4px", background: "linear-gradient(90deg, var(--steel-grey), var(--silver-grey))", boxShadow: "0 0 16px rgba(156,163,175,0.8)"}} />
+      <div style={{ 
+        color: "var(--steel-grey)", 
+        fontSize: "clamp(14px, 1.8vw, 17px)", 
+        fontWeight: 900, 
+        letterSpacing: "0.12em", 
+        textTransform: "uppercase", 
+        textAlign: "center",
+        transform: "translateY(-16px)",
+        position: "relative",
+        display: "block"
+      }}>
+        QUALITÀ OMBRE
+      </div>
+      <div style={{display: "flex", gap: "12px", justifyContent: "center", marginTop: "-8px"}}>
+        {/* BASSE - QUALITÀ STANDARD */}
+        <button 
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => { 
+            e.stopPropagation(); 
+            setAntialiasMode(0);  // 👈 BASSE = 2048x2048
+          }}
+          style={{
+            background: antialiasMode === 0 ? "#ffffff" : `radial-gradient(ellipse at top left, var(--glass-grey) 0%, transparent 50%), linear-gradient(145deg, var(--grey-void) 0%, var(--onyx) 50%, var(--carbon-black) 100%)`,
+            border: antialiasMode === 0 ? "2px solid rgba(255,255,255,0.8)" : "2px solid rgba(156,163,175,0.7)",
+            borderRadius: "20px", 
+            color: antialiasMode === 0 ? "var(--onyx)" : "var(--white-smoke)", 
+            fontSize: "clamp(14px, 2vw, 16px)",
+            fontWeight: 800,
+            padding: "10px 18px",
+            cursor: "pointer", 
+            textTransform: "uppercase", 
+            letterSpacing: "0.05em",
+            fontFamily: "'OCR A Extended', 'Courier New', monospace",
+            boxShadow: antialiasMode === 0 
+              ? "0 12px 28px rgba(255,255,255,0.3), inset 0 2px 4px rgba(255,255,255,0.6)" 
+              : "0 16px 32px rgba(156,163,175,0.4)",
+            transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)", 
+            minWidth: "72px"
+          }}>
+          BASSE
+        </button>
+        
+        {/* ALTE - QUALITÀ MASSIMA ⭐ */}
+        <button 
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => { 
+            e.stopPropagation(); 
+            setAntialiasMode(1);  // 👈 ALTE = 8192x8192 (4X PIÙ NITIDE!)
+          }}
+          style={{
+            background: antialiasMode === 1 ? "#ffffff" : `radial-gradient(ellipse at top left, var(--glass-grey) 0%, transparent 50%), linear-gradient(145deg, var(--grey-void) 0%, var(--onyx) 50%, var(--carbon-black) 100%)`,
+            border: antialiasMode === 1 ? "2px solid rgba(255,255,255,0.8)" : "2px solid rgba(156,163,175,0.7)",
+            borderRadius: "20px", 
+            color: antialiasMode === 1 ? "var(--onyx)" : "var(--white-smoke)", 
+            fontSize: "clamp(14px, 2vw, 16px)",
+            fontWeight: 800,
+            padding: "10px 18px",
+            cursor: "pointer", 
+            textTransform: "uppercase", 
+            letterSpacing: "0.05em",
+            fontFamily: "'OCR A Extended', 'Courier New', monospace",
+            boxShadow: antialiasMode === 1 
+              ? "0 12px 28px rgba(255,255,255,0.3), inset 0 2px 4px rgba(255,255,255,0.6)" 
+              : "0 16px 32px rgba(156,163,175,0.4)",
+            transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)", 
+            minWidth: "72px"
+          }}>
+          ALTE
+        </button>
+      </div>
+    </div>
   </div>
 )}
+
+
+
+
+                
               </div>
               
               {/* SUBTEXT */}
@@ -691,8 +887,29 @@ export default function GameScene({ stats, setStats, onGameOver, onWeaponNearCha
         </>
       )}
 
-      {/* CROCE */}
-      {!isPaused && (
+      {/* CONTROLLI MOBILE — montati direttamente qui, sempre visibili su touch */}
+      {isTouch && !isPaused && (
+        <MobileControls nearAmmoCrate={nearAmmoCrate} />
+      )}
+
+      {/* PULSANTE 📱 override (angolo top-left) — per test su DevTools */}
+      <div
+        onClick={() => setIsTouch(v => !v)}
+        style={{
+          position: "absolute", top: 12, left: 12,
+          width: 36, height: 36, borderRadius: "50%",
+          background: isTouch ? "rgba(221,170,51,0.85)" : "rgba(0,0,0,0.45)",
+          border: isTouch ? "2px solid #ddaa33" : "2px solid rgba(255,255,255,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 16, cursor: "pointer", pointerEvents: "auto",
+          zIndex: 200, transition: "all 0.2s",
+          boxShadow: isTouch ? "0 0 12px rgba(221,170,51,0.6)" : "none",
+        }}
+        title={isTouch ? "Disattiva controlli mobile" : "Attiva controlli mobile"}
+      >📱</div>
+
+      {/* CROCE — solo desktop */}
+      {!isPaused && !isTouch && (
         <div style={{
           position: "absolute", 
           top: "50%", 
