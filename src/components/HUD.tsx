@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { GameStats } from "@/pages/Game";
 import { WEAPONS, WEAPON_ORDER, WeaponId } from "./weapons";
-import { isMobile } from "./MobileControls";
+import MobileControls, { isMobile } from "./MobileControls";
 
 interface HUDProps {
   stats: GameStats;
