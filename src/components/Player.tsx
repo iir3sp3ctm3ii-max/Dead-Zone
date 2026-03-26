@@ -6,7 +6,7 @@ import { GameStats } from "@/pages/Game";
 import GunWrapper from "./gun-1911-wrapper";
 import { isPausedRef } from "./GameScene";
 import { WEAPONS, WEAPON_ORDER, WeaponId } from "./weapons";
-import { mobileJoystick, mobileLook, isMobile } from "./MobileControls";
+import MobileControls, { isMobile } from "./MobileControls";
 
 const MOVE_SPEED    = 5;
 const PLAYER_HEIGHT = 1.9;
