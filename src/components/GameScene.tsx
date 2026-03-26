@@ -6,7 +6,7 @@ import Player from "./Player";
 import ZombieManager from "./ZombieManager";
 import EnvironmentComponent from "./Environment";
 import WeaponWalls from "./WeaponWall";
-import MobileControls from "./MobileControls";
+import MobileControls, { isMobile } from "./MobileControls";
 import { WeaponId, WEAPONS, WEAPON_ORDER } from "./weapons";
 import { mobileShootRef, mobileReloadRef, mobileSwitchRef } from "./Player";
 import { GameStats } from "@/pages/Game";
