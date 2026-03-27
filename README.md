@@ -11,16 +11,16 @@
 **📋 MINIMI**
 | Componente | Requisito |
 |-----------|-----------|
-| GPU | GTX 550 Ti / HD 6790 |
+| GPU | GT 1030 / HD 5970 |
 | RAM | 4 GB |
 | CPU | Intel i3 6100 / AMD FX-6130 |
  
 **📋 CONSIGLIATI**
 | Componente | Requisito |
 |-----------|-----------|
-| GPU | GTX 750 Ti / RX 550 |
+| GPU | GTX 1050 Ti / RX 570 |
 | RAM | 8 GB |
-| CPU | Intel i5 6400 / AMD FX-8320 |
+| CPU | Intel i7 7700 / AMD Ryzen 3 3100 |
 
 ---
 
